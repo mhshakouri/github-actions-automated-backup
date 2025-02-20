@@ -7,6 +7,8 @@ on:
   # plans a cron job to run it in an interval
   schedule:
     - cron: '*/15 * * * *'
+env:
+  BACKUP_FILE: "backup_$(date +%Y-%m-%d_%H-%M-%S).sql.gz"
 
 jobs:
   create-backup:
@@ -33,18 +35,18 @@ jobs:
           SOURCE_DB_PASS: ${{ secrets.SOURCE_DB_PASS }}
           SOURCE_DB_ROOT_PASS: ${{ secrets.SOURCE_DB_ROOT_PASS }}
           SOURCE_DB_TEMP_PATH: ${{ secrets.SOURCE_DB_TEMP_PATH }}
+          BACKUP_FILE: ${{ env.BACKUP_FILE }}
         with:
           host: ${{ secrets.SOURCE_SERVER_IP }}
           username: ${{ secrets.SOURCE_SERVER_USER }}
           key: ${{ secrets.SOURCE_SERVER_KEY }}
           port: ${{ secrets.SOURCE_SERVER_PORT }}
-          envs: TELEGRAM_TO, TELEGRAM_TOKEN, SOURCE_DB_CONTAINER, SOURCE_DB_PORT, SOURCE_DB_NAME, SOURCE_DB_USER, SOURCE_DB_PASS, SOURCE_DB_ROOT_PASS, SOURCE_DB_TEMP_PATH
+          envs: TELEGRAM_TO, TELEGRAM_TOKEN, SOURCE_DB_CONTAINER, SOURCE_DB_PORT, SOURCE_DB_NAME, SOURCE_DB_USER, SOURCE_DB_PASS, SOURCE_DB_ROOT_PASS, SOURCE_DB_TEMP_PATH, BACKUP_FILE
           command_timeout: "15m"
           # this is a psuedo command example, change at your own desire
           script: |
             cd $SOURCE_DB_TEMP_PATH
-            backup_file="./backup.sql.gz"
-            docker exec ${SOURCE_DB_CONTAINER} mysqldump -u root -p${SOURCE_DB_ROOT_PASS} ${SOURCE_DB_NAME} | gzip -9 > "${backup_file}"
+            docker exec ${SOURCE_DB_CONTAINER} mysqldump -u root -p${SOURCE_DB_ROOT_PASS} ${SOURCE_DB_NAME} | gzip -9 > "${BACKUP_FILE}"
       - uses: appleboy/telegram-action@master
         name: end-notifier
         if: always()
@@ -70,17 +72,18 @@ jobs:
           TELEGRAM_TO: ${{ secrets.TELEGRAM_TO }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           SOURCE_DB_TEMP_PATH: ${{ secrets.SOURCE_DB_TEMP_PATH }}
+          BACKUP_FILE: ${{ env.BACKUP_FILE }}
         with:
           host: ${{ secrets.SOURCE_SERVER_IP }}
           username: ${{ secrets.SOURCE_SERVER_USER }}
           key: ${{ secrets.SOURCE_SERVER_KEY }}
           port: ${{ secrets.SOURCE_SERVER_PORT }}
-          envs: TELEGRAM_TO, TELEGRAM_TOKEN, SOURCE_DB_TEMP_PATH
+          envs: TELEGRAM_TO, TELEGRAM_TOKEN, SOURCE_DB_TEMP_PATH, BACKUP_FILE
           command_timeout: "15m"
           script: |
             cd $SOURCE_DB_TEMP_PATH
             backup_file="./backup.sql.gz"
-            curl -v -s -F document=@"$backup_file" "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendDocument?chat_id=${TELEGRAM_TO}"
+            curl -v -s -F document=@"$BACKUP_FILE" "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendDocument?chat_id=${TELEGRAM_TO}"
       - uses: appleboy/telegram-action@master
         name: end-notifier
         if: always()
@@ -111,20 +114,20 @@ jobs:
           TARGET_SERVER_KEY: ${{ secrets.TARGET_SERVER_KEY }}
           TARGET_SERVER_USER: ${{ secrets.TARGET_SERVER_USER }}
           TARGET_DB_TEMP_PATH: ${{ secrets.TARGET_DB_TEMP_PATH }}
+          BACKUP_FILE: ${{ env.BACKUP_FILE }}
         with:
           host: ${{ secrets.SOURCE_SERVER_IP }}
           username: ${{ secrets.SOURCE_SERVER_USER }}
           key: ${{ secrets.SOURCE_SERVER_KEY }}
           port: ${{ secrets.SOURCE_SERVER_PORT }}
-          envs: TELEGRAM_TO, TELEGRAM_TOKEN, SOURCE_DB_TEMP_PATH, TARGET_SERVER_IP, TARGET_SERVER_PORT, TARGET_SERVER_KEY, TARGET_SERVER_USER, TARGET_DB_TEMP_PATH
+          envs: TELEGRAM_TO, TELEGRAM_TOKEN, SOURCE_DB_TEMP_PATH, TARGET_SERVER_IP, TARGET_SERVER_PORT, TARGET_SERVER_KEY, TARGET_SERVER_USER, TARGET_DB_TEMP_PATH, BACKUP_FILE
           command_timeout: "15m"
           script: |
-            backup_file="./backup.sql.gz"
             mkdir -p ~/.ssh
             echo "$TARGET_SERVER_KEY" > ~/.ssh/temp_id_rsa
             chmod 600 ~/.ssh/temp_id_rsa
             cd $SOURCE_DB_TEMP_PATH
-            scp -o StrictHostKeyChecking=no -i ~/.ssh/temp_id_rsa -P "$TARGET_SERVER_PORT" "$backup_file" "$TARGET_SERVER_USER@$TARGET_SERVER_IP:$TARGET_DB_TEMP_PATH/$(basename $backup_file)"
+            scp -o StrictHostKeyChecking=no -i ~/.ssh/temp_id_rsa -P "$TARGET_SERVER_PORT" "$BACKUP_FILE" "$TARGET_SERVER_USER@$TARGET_SERVER_IP:$TARGET_DB_TEMP_PATH/$(basename $backup_file)"
             rm ~/.ssh/temp_id_rsa
             rm *.sql.gz
           # clean up after upload complete
