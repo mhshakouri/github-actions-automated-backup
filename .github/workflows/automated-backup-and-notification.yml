@@ -165,13 +165,6 @@ jobs:
       - name: Upload backup
         uses: appleboy/ssh-action@v1.2.1
         env:
-          TELEGRAM_TO: ${{ secrets.TELEGRAM_TO }}
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          SOURCE_DB_TEMP_PATH: ${{ secrets.SOURCE_DB_TEMP_PATH }}
-          TARGET_SERVER_IP: ${{ secrets.TARGET_SERVER_IP }}
-          TARGET_SERVER_PORT: ${{ secrets.TARGET_SERVER_PORT }}
-          TARGET_SERVER_KEY: ${{ secrets.TARGET_SERVER_KEY }}
-          TARGET_SERVER_USER: ${{ secrets.TARGET_SERVER_USER }}
           TARGET_DB_TEMP_PATH: ${{ secrets.TARGET_DB_TEMP_PATH }}
           BACKUP_FILE: ${{ env.BACKUP_FILE }}
         with:
@@ -179,15 +172,14 @@ jobs:
           username: ${{ secrets.SOURCE_SERVER_USER }}
           key: ${{ secrets.SOURCE_SERVER_KEY }}
           port: ${{ secrets.SOURCE_SERVER_PORT }}
-          envs: TELEGRAM_TO, TELEGRAM_TOKEN, SOURCE_DB_TEMP_PATH, TARGET_SERVER_IP, TARGET_SERVER_PORT, TARGET_SERVER_KEY, TARGET_SERVER_USER, TARGET_DB_TEMP_PATH, BACKUP_FILE
+          envs: TARGET_DB_TEMP_PATH, BACKUP_FILE
           command_timeout: "15m"
           script: |
             mkdir -p ~/.ssh
             echo "$TARGET_SERVER_KEY" > ~/.ssh/temp_id_rsa
             chmod 600 ~/.ssh/temp_id_rsa
             cd $SOURCE_DB_TEMP_PATH
-            scp -o StrictHostKeyChecking=no -i ~/.ssh/temp_id_rsa -P "$TARGET_SERVER_PORT" "$BACKUP_FILE" "$TARGET_SERVER_USER@$TARGET_SERVER_IP:$TARGET_DB_TEMP_PATH/$(basename $backup_file)"
-            rm ~/.ssh/temp_id_rsa
+            rm $BACKUP_FILE
           # clean up after upload complete
       - name: End notifier
         uses: appleboy/telegram-action@master
