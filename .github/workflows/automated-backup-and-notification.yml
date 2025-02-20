@@ -7,26 +7,30 @@ on:
   # plans a cron job to run it in an interval
   schedule:
     - cron: '*/15 * * * *'
-env:
-  BACKUP_FILE: "backup_$(date +%Y-%m-%d_%H-%M-%S).sql.gz"
 
 jobs:
   create-backup:
-    name: create-backup-job
+    name: Create backup job
     # The type of runner that the job will run on
     runs-on: ubuntu-latest
+    outputs:
+      BACKUP_FILE: ${{ steps.set-backup-file.outputs.BACKUP_FILE }} # Expose filename for other jobs
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
+      - name: Generate backup filename
+        id: set-backup-file
+        run: echo "BACKUP_FILE=backup_$(date +%Y-%m-%d_%H-%M-%S).sql.gz" >> $GITHUB_ENV
+        
       # Sending notifications on telegram
-      - uses: appleboy/telegram-action@master # see https://github.com/appleboy/telegram-action
-        name: start-notifier
+      - name: Start notifier
+        uses: appleboy/telegram-action@master # see https://github.com/appleboy/telegram-action
         with:
           to: ${{ secrets.TELEGRAM_TO }}
           token: ${{ secrets.TELEGRAM_TOKEN }}
           message: "⏳ Database backup: Started"
-      - uses: appleboy/ssh-action@v1.2.1 # https://github.com/appleboy/ssh-action
-        name: create-backup
+      - name: Create backup
+        uses: appleboy/ssh-action@v1.2.1 # https://github.com/appleboy/ssh-action
         env:
           SOURCE_DB_CONTAINER: ${{ secrets.SOURCE_DB_CONTAINER }}
           SOURCE_DB_PORT: ${{ secrets.SOURCE_DB_PORT }}
@@ -47,8 +51,8 @@ jobs:
           script: |
             cd $SOURCE_DB_TEMP_PATH
             docker exec ${SOURCE_DB_CONTAINER} mysqldump -u root -p${SOURCE_DB_ROOT_PASS} ${SOURCE_DB_NAME} | gzip -9 > "${BACKUP_FILE}"
-      - uses: appleboy/telegram-action@master
-        name: end-notifier
+      - name: End notifier
+        uses: appleboy/telegram-action@master
         if: always()
         with:
           to: ${{ secrets.TELEGRAM_TO }}
@@ -57,17 +61,20 @@ jobs:
 
   # usefull if your compressed database backups are less than 50MB, free storage after all!
   upload-backup-to-telegram:
-    name: upload-backup-to-telegram
+    name: Upload backup to telegram
     runs-on: ubuntu-latest
+    needs: create-backup
+    env:
+      BACKUP_FILE: ${{ needs.create-backup.outputs.BACKUP_FILE }}
     steps:
-      - uses: appleboy/telegram-action@master
-        name: start-notifier
+      - name: Start notifier
+        uses: appleboy/telegram-action@master
         with:
           to: ${{ secrets.TELEGRAM_TO }}
           token: ${{ secrets.TELEGRAM_TOKEN }}
           message: "⏳ Uploading backup to telegram: Started"
-      - uses: appleboy/ssh-action@v1.2.1
-        name: upload-backup
+      - name: Upload backup
+        uses: appleboy/ssh-action@v1.2.1
         env:
           TELEGRAM_TO: ${{ secrets.TELEGRAM_TO }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
@@ -84,8 +91,8 @@ jobs:
             cd $SOURCE_DB_TEMP_PATH
             backup_file="./backup.sql.gz"
             curl -v -s -F document=@"$BACKUP_FILE" "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendDocument?chat_id=${TELEGRAM_TO}"
-      - uses: appleboy/telegram-action@master
-        name: end-notifier
+      - name: End notifier
+        uses: appleboy/telegram-action@master
         if: always()
         with:
           to: ${{ secrets.TELEGRAM_TO }}
@@ -93,18 +100,21 @@ jobs:
           message: "${{ job.status == 'success' && '✅' || '❌' }} Uploading backup to telegram: ${{ job.status }}"
             
   upload-backup-to-offsite-storage: # or upload to staging
-    name: upload-backup-to-offsite-storage
+    name: Upload backup to offsite storage
     runs-on: ubuntu-latest
+    needs: create-backup
+    env:
+      BACKUP_FILE: ${{ needs.create-backup.outputs.BACKUP_FILE }}
     steps:
-      - uses: appleboy/telegram-action@master
-        name: start-notifier
+      - name: Start notifier
+        uses: appleboy/telegram-action@master
         with:
           to: ${{ secrets.TELEGRAM_TO }}
           token: ${{ secrets.TELEGRAM_TOKEN }}
           message: "⏳ Uploading backup to offsite storage: Started"
       # we're using a simple scp between two servers, you also use any thing else like a s3 bucket, ftp, etc
-      - uses: appleboy/ssh-action@v1.2.1
-        name: upload-backup
+      - name: Upload backup
+        uses: appleboy/ssh-action@v1.2.1
         env:
           TELEGRAM_TO: ${{ secrets.TELEGRAM_TO }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
@@ -129,10 +139,58 @@ jobs:
             cd $SOURCE_DB_TEMP_PATH
             scp -o StrictHostKeyChecking=no -i ~/.ssh/temp_id_rsa -P "$TARGET_SERVER_PORT" "$BACKUP_FILE" "$TARGET_SERVER_USER@$TARGET_SERVER_IP:$TARGET_DB_TEMP_PATH/$(basename $backup_file)"
             rm ~/.ssh/temp_id_rsa
-            rm *.sql.gz
           # clean up after upload complete
-      - uses: appleboy/telegram-action@master
-        name: end-notifier
+      - name: End notifier
+        uses: appleboy/telegram-action@master
+        if: always()
+        with:
+          to: ${{ secrets.TELEGRAM_TO }}
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          message: "${{ job.status == 'success' && '✅' || '❌' }} Uploading backup to offsite storage: ${{ job.status }}"
+            
+  clean-up: 
+    name: Clean up backup residuals
+    runs-on: ubuntu-latest
+    needs: create-backup
+    env:
+      BACKUP_FILE: ${{ needs.create-backup.outputs.BACKUP_FILE }}
+    steps:
+      - name: Start notifier
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_TO }}
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          message: "⏳ Uploading backup to offsite storage: Started"
+      # we're using a simple scp between two servers, you also use any thing else like a s3 bucket, ftp, etc
+      - name: Upload backup
+        uses: appleboy/ssh-action@v1.2.1
+        env:
+          TELEGRAM_TO: ${{ secrets.TELEGRAM_TO }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          SOURCE_DB_TEMP_PATH: ${{ secrets.SOURCE_DB_TEMP_PATH }}
+          TARGET_SERVER_IP: ${{ secrets.TARGET_SERVER_IP }}
+          TARGET_SERVER_PORT: ${{ secrets.TARGET_SERVER_PORT }}
+          TARGET_SERVER_KEY: ${{ secrets.TARGET_SERVER_KEY }}
+          TARGET_SERVER_USER: ${{ secrets.TARGET_SERVER_USER }}
+          TARGET_DB_TEMP_PATH: ${{ secrets.TARGET_DB_TEMP_PATH }}
+          BACKUP_FILE: ${{ env.BACKUP_FILE }}
+        with:
+          host: ${{ secrets.SOURCE_SERVER_IP }}
+          username: ${{ secrets.SOURCE_SERVER_USER }}
+          key: ${{ secrets.SOURCE_SERVER_KEY }}
+          port: ${{ secrets.SOURCE_SERVER_PORT }}
+          envs: TELEGRAM_TO, TELEGRAM_TOKEN, SOURCE_DB_TEMP_PATH, TARGET_SERVER_IP, TARGET_SERVER_PORT, TARGET_SERVER_KEY, TARGET_SERVER_USER, TARGET_DB_TEMP_PATH, BACKUP_FILE
+          command_timeout: "15m"
+          script: |
+            mkdir -p ~/.ssh
+            echo "$TARGET_SERVER_KEY" > ~/.ssh/temp_id_rsa
+            chmod 600 ~/.ssh/temp_id_rsa
+            cd $SOURCE_DB_TEMP_PATH
+            scp -o StrictHostKeyChecking=no -i ~/.ssh/temp_id_rsa -P "$TARGET_SERVER_PORT" "$BACKUP_FILE" "$TARGET_SERVER_USER@$TARGET_SERVER_IP:$TARGET_DB_TEMP_PATH/$(basename $backup_file)"
+            rm ~/.ssh/temp_id_rsa
+          # clean up after upload complete
+      - name: End notifier
+        uses: appleboy/telegram-action@master
         if: always()
         with:
           to: ${{ secrets.TELEGRAM_TO }}
